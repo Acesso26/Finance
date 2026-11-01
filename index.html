@@ -210,9 +210,11 @@ async function carregar(){
   try {
     const url = `${SUPABASE_URL}/rest/v1/contatos?select=*`;
     const res = await fetch(url, {
+      method: 'GET',
       headers: {
         'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Accept': 'application/json'
       }
     });
     
@@ -291,4 +293,137 @@ window.abrirModalEliminarTudo=function(){
   document.getElementById('senhaErro').style.display='none';
   setTimeout(()=>document.getElementById('inputSenha').focus(),100);
 }
-window.fecharModalSenha=function(){document.getElementById('modalSenha').
+window.fecharModalSenha=function(){document.getElementById('modalSenha').style.display='none';}
+
+window.confirmarEliminarTudo=async function(){
+  const input=document.getElementById('inputSenha');
+  const senha=input.value.trim();
+  const erroEl=document.getElementById('senhaErro');
+  if(senha!=='123'){
+    erroEl.style.display='block';
+    input.classList.add('erro');
+    input.value='';
+    input.focus();
+    setTimeout(()=>input.classList.remove('erro'),400);
+    return;
+  }
+  fecharModalSenha();
+  const st=document.getElementById('status');
+  st.innerText='● Eliminando tudo...';
+  mostrarToast('⏳ Apagando todas as contas...');
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/contatos?id=gt.0`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    alarmesSilenciados={};
+    contasDesmarcadas.clear();
+    localStorage.setItem('alarmes_silenciados',JSON.stringify({}));
+    localStorage.setItem('contas_desmarcadas',JSON.stringify([]));
+    pararAlarmeSomenteAudio();
+    document.getElementById('btnParar').style.display='none';
+    document.getElementById('bannerAlarme').style.display='none';
+    mostrarToast('✅ Todas as contas eliminadas');
+    carregar();
+  }catch(e){
+    mostrarToast('Erro ao eliminar tudo',true);
+    st.innerText='● Erro';
+  }
+}
+
+document.getElementById('inputSenha').addEventListener('keydown', (e)=>{
+  if(e.key==='Enter') confirmarEliminarTudo();
+  if(e.key==='Escape') fecharModalSenha();
+});
+document.getElementById('modalSenha').addEventListener('click', (e)=>{
+  if(e.target.id==='modalSenha') fecharModalSenha();
+});
+
+window.desmarcarVermelhos=function(){let n=0;todosDados.forEach(i=>{if(parseValor(i.valor)>=limite){const k=String(i.contacto||'').trim();if(!contasDesmarcadas.has(k)){contasDesmarcadas.add(k);n++}}});localStorage.setItem('contas_desmarcadas',JSON.stringify([...contasDesmarcadas]));mostrarTabela(dadosFiltrados);verificarAlarme();mostrarToast(`✓ ${n} alertas limpos`)}
+window.resetDesmarcados=function(){if(!contasDesmarcadas.size){mostrarToast('Nada oculto');return}contasDesmarcadas.clear();localStorage.setItem('contas_desmarcadas',JSON.stringify([]));mostrarTabela(dadosFiltrados);verificarAlarme();mostrarToast('↩ Restaurado')}
+window.setLimite=function(v){limite=parseFloat(v);document.getElementById('limiteAlarme').value=v;localStorage.setItem('alarme_threshold',v);document.getElementById('limiteInfo').innerText='≥'+Number(v).toLocaleString('pt-AO')+' KZ';mostrarTabela(dadosFiltrados);verificarAlarme()}
+
+let deb=null;document.getElementById('limiteAlarme').addEventListener('input',e=>{clearTimeout(deb);deb=setTimeout(()=>{let v=parseFloat(e.target.value)||0;if(v<=0)return;limite=v;localStorage.setItem('alarme_threshold',v);document.getElementById('limiteInfo').innerText='≥'+Number(v).toLocaleString('pt-AO')+' KZ';mostrarTabela(dadosFiltrados);verificarAlarme();mostrarToast('Limite ≥ '+v+' KZ')},500)})
+
+function verificarAlarme(){
+  pararAlarmeSomenteAudio();
+  if(!todosDados.length||limite<=0){document.getElementById('bannerAlarme').style.display='none';return;}
+  let max=0;
+  let contasAlerta=[];
+  todosDados.forEach(item=>{
+    const v=parseValor(item.valor);
+    const keyContacto=String(item.contacto||'').trim();
+    const keyId=String(item.id||'');
+    if(contasDesmarcadas.has(keyContacto) || contasDesmarcadas.has(keyId)) return;
+    const silenciadoValor=alarmesSilenciados.hasOwnProperty(keyContacto) ? alarmesSilenciados[keyContacto] : null;
+    const foiSilenciado = silenciadoValor!==null;
+    const aumentou = foiSilenciado && v > silenciadoValor + 0.01;
+    if(v>=limite){
+      if(v>max) max=v;
+      if(!foiSilenciado || aumentou){
+        contasAlerta.push(item);
+      }
+    }
+  });
+  const b=document.getElementById('bannerAlarme');
+  if(!contasAlerta.length){b.style.display='none';return;}
+  contasAlerta.sort((a,b)=>parseValor(b.valor)-parseValor(a.valor));
+  const top = contasAlerta[0];
+  if(max>=5000){
+    tocarAlarmeCritico();
+    if(contasAlerta.length===1){
+      b.innerHTML=`⚠ CRÍTICO: ${max.toLocaleString('pt-AO')} KZ<span class="detalhe">📞 <strong>${escHtml(top.contacto||'-')}</strong> | 🔑 <strong>${escHtml(top.mensagem||'-')}</strong> — <b>${escHtml(top.valor||'')}</b></span>`;
+    }else{
+      b.innerHTML=`⚠ CRÍTICO: ${contasAlerta.length} contas • máx ${max.toLocaleString('pt-AO')} KZ<span class="detalhe">1º: 📞 <strong>${escHtml(top.contacto||'')}</strong> | 🔑 <strong>${escHtml(top.mensagem||'')}</strong> (${escHtml(top.valor||'')}) ${contasAlerta.length>1?`+ ${contasAlerta.length-1} outros` : ''}</span>`;
+    }
+    b.style.display='block';
+  }else{
+    tocarAlarmeNormal();
+    if(contasAlerta.length===1){
+      b.innerHTML=`● ALERTA: ${escHtml(top.contacto||'')} ≥ ${limite.toLocaleString('pt-AO')} KZ<span class="detalhe">📞 <strong>${escHtml(top.contacto||'')}</strong> | 🔑 <strong>${escHtml(top.mensagem||'')}</strong> — <b>${escHtml(top.valor||'')}</b> <span style="opacity:0.8">(clique em 🔇 Parar para silenciar esta conta)</span></span>`;
+    }else{
+      b.innerHTML=`● ${contasAlerta.length} contas ≥ ${limite.toLocaleString('pt-AO')} KZ • máx ${max.toLocaleString('pt-AO')} KZ<span class="detalhe">Destaque: 📞 <strong>${escHtml(top.contacto||'')}</strong> | 🔑 <strong>${escHtml(top.mensagem||'')}</strong> (${escHtml(top.valor||'')}) +${contasAlerta.length-1} outras</span>`;
+    }
+    b.style.display='block';
+  }
+}
+
+function pararAlarmeSomenteAudio(){alarmeAtivo=false;if(intervaloAlarme)clearInterval(intervaloAlarme);intervaloAlarme=null;if(audioCtx)try{audioCtx.close()}catch(e){}audioCtx=null}
+function tocarAlarmeNormal(){if(alarmeAtivo)return;alarmeAtivo=true;document.getElementById('btnParar').style.display='inline-flex';audioCtx=new (window.AudioContext||window.webkitAudioContext)();function beep(f,d){if(!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=f;o.connect(g);g.connect(audioCtx.destination);g.gain.setValueAtTime(0.22,audioCtx.currentTime);o.start();o.stop(audioCtx.currentTime+d/1000)}intervaloAlarme=setInterval(()=>{beep(800,160);setTimeout(()=>beep(500,160),240)},1000)}
+function tocarAlarmeCritico(){if(alarmeAtivo)return;alarmeAtivo=true;document.getElementById('btnParar').style.display='inline-flex';audioCtx=new (window.AudioContext||window.webkitAudioContext)();function beep(f,d,v=0.3){if(!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=f;o.connect(g);g.connect(audioCtx.destination);g.gain.setValueAtTime(v,audioCtx.currentTime);o.start();o.stop(audioCtx.currentTime+d/1000)}intervaloAlarme=setInterval(()=>{beep(1100,100,0.35);setTimeout(()=>beep(320,100,0.35),120);setTimeout(()=>beep(1100,100,0.35),240)},600)}
+
+window.pararAlarme=function(){
+  let n=0;
+  todosDados.forEach(i=>{
+    const v=parseValor(i.valor);
+    const k=String(i.contacto||'').trim();
+    if(v>=limite){
+      if(!contasDesmarcadas.has(k) && !contasDesmarcadas.has(String(i.id))){
+        alarmesSilenciados[k]=v;
+        n++;
+      }
+    }
+  });
+  localStorage.setItem('alarmes_silenciados',JSON.stringify(alarmesSilenciados));
+  alarmeAtivo=false;
+  if(intervaloAlarme)clearInterval(intervaloAlarme);
+  intervaloAlarme=null;
+  if(audioCtx)try{audioCtx.close()}catch(e){}
+  audioCtx=null;
+  document.getElementById('btnParar').style.display='none';
+  document.getElementById('bannerAlarme').style.display='none';
+  mostrarToast(`🔇 ${n} contas silenciadas para sempre (só tocam se subir)`);
+}
+
+function resetarTimer(){tempoRestante=180;atualizarTimerDisplay()}
+function atualizarTimerDisplay(){const m=String(Math.floor(tempoRestante/60)).padStart(2,'0'),s=String(tempoRestante%60).padStart(2,'0');document.getElementById('timer').innerText=m+':'+s}
+
+intervaloContagem=setInterval(()=>{if(!document.getElementById('autoToggle').checked)return;tempoRestante--;if(tempoRestante<=0){carregar();tempoRestante=180}atualizarTimerDisplay()},1000)
+function mostrarToast(msg,err=false){const t=document.getElementById('toast');t.innerText=msg;t.style.display='block';t.style.background=err?'#7f1d1d':'#0f172a';t.style.borderColor=err?'#ef4444':'#1e293b';setTimeout(()=>t.style.display='none',3500)}
+
+// Execução inicial e loop de sincronização automática a cada 5 segundos
+carregar();
+setInterval(()=>{if(document.getElementById('autoToggle').checked)carregar();},5000);
+</script>
+</body>
+</html>

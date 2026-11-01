@@ -131,7 +131,7 @@
 <div class="topo-fixo">
   <div class="header-top">
     <div class="brand"><h2><i>◍</i> Central Financeira</h2></div>
-    <div id="status">● Carregando...</div>
+    <div id="status">● A conectar...</div>
   </div>
   <div id="bannerAlarme"></div>
   <div class="cards">
@@ -184,11 +184,10 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
-<script type="module">
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
-const supabaseUrl='https://tzicxkwwxngrjwudrcdv.supabase.co'
-const supabaseKey='sb_publishable_8gA31piPXpbmZCUT1lJ_-w_Y-OH5UhP'
-const supabase=createClient(supabaseUrl,supabaseKey)
+
+<script>
+const SUPABASE_URL = 'https://tzicxkwwxngrjwudrcdv.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_8gA31piPXpbmZCUT1lJ_-w_Y-OH5UhP';
 
 let todosDados=[], dadosFiltrados=[], alarmeAtivo=false, audioCtx=null, intervaloAlarme=null, intervaloContagem=null, tempoRestante=180
 let limite=parseFloat(localStorage.getItem('alarme_threshold')||'1000')
@@ -202,24 +201,52 @@ function escHtml(s){return escAttr(s)}
 function customConfirm(msg){return new Promise(r=>{const m=document.getElementById('modalConfirm'),t=document.getElementById('modalText'),ok=document.getElementById('modalOk'),ca=document.getElementById('modalCancel');t.innerText=msg;m.style.display='flex';const cl=v=>{m.style.display='none';ok.onclick=null;ca.onclick=null;r(v)};ok.onclick=()=>cl(true);ca.onclick=()=>cl(false); m.onclick=(e)=>{if(e.target===m)cl(false)}})}
 function parseValor(str){if(!str)return 0;let s=String(str).toLowerCase().replace(/kz/g,'').trim().replace(/\s/g,'').replace(/[^0-9.,\-]/g,'');if(!s)return 0;if(s.includes('.')&&s.includes(',')){if(s.lastIndexOf('.')>s.lastIndexOf(','))s=s.replace(/,/g,'');else s=s.replace(/\./g,'').replace(',', '.')}else if(s.includes(',')){let p=s.split(','),u=p[p.length-1];if(u.length<=2)s=p.slice(0,-1).join('')+'.'+u;else s=s.replace(/,/g,'')}else{let p=s.split('.');if(p.length==2&&p[1].length===3)s=p[0]+p[1];else if(p.length>2){let d=p.pop();if(d.length<=2)s=p.join('')+'.'+d;else s=p.join('')+d}}let n=parseFloat(s);return isNaN(n)?0:n}
 
+// Função de comunicação direta via fetch nativo (Sem erros de módulo externo)
+async function supabaseFetch(endpoint, options = {}) {
+  const url = `${SUPABASE_URL}/rest/v1/${endpoint}`;
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    ...options.headers
+  };
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(errText || 'Erro na requisição');
+  }
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
 async function carregar(){
   const st=document.getElementById('status');
   st.innerText='● Sincronizando...';
-  const{data,error}=await supabase.from('contatos').select('*');
-  if(error){st.innerText='● Erro';mostrarToast('❌ '+error.message,true);return}
-  if(!data||!data.length){
-    st.innerText='● Vazio';
-    document.getElementById('lista').innerHTML='<tr><td colspan=6 style="text-align:center;color:#64748b;padding:20px">Sem dados</td></tr>';
-    todosDados=[];dadosFiltrados=[];document.getElementById('totalContas').innerText='0';document.getElementById('saldoAltoCount').innerText='0';document.getElementById('mostrando').innerText='0 contas';verificarAlarme();return
+  try {
+    const data = await supabaseFetch('contatos?select=*');
+    if(!data||!data.length){
+      st.innerText='● Vazio (0 contas)';
+      document.getElementById('lista').innerHTML='<tr><td colspan=6 style="text-align:center;color:#64748b;padding:20px">Sem dados na tabela contatos</td></tr>';
+      todosDados=[]; dadosFiltrados=[];
+      document.getElementById('totalContas').innerText='0';
+      document.getElementById('saldoAltoCount').innerText='0';
+      document.getElementById('mostrando').innerText='0 contas';
+      verificarAlarme();
+      resetarTimer();
+      return;
+    }
+    data.sort((a,b)=>(b.id||0)-(a.id||0));
+    todosDados=data;
+    dadosFiltrados=data;
+    document.getElementById('totalContas').innerText=data.length;
+    st.innerText='● '+data.length+' contas • '+new Date().toLocaleTimeString('pt-PT');
+    mostrarTabela(dadosFiltrados);
+    verificarAlarme();
+    resetarTimer();
+  } catch(err) {
+    st.innerText='● Erro de Ligação';
+    mostrarToast('❌ Falha ao conectar à base de dados',true);
   }
-  data.sort((a,b)=>(b.id||0)-(a.id||0));
-  todosDados=data;
-  dadosFiltrados=data;
-  document.getElementById('totalContas').innerText=data.length;
-  st.innerText='● '+data.length+' contas • '+new Date().toLocaleTimeString('pt-PT');
-  mostrarTabela(dadosFiltrados);
-  verificarAlarme();
-  resetarTimer();
 }
 
 function mostrarTabela(dados){
@@ -251,14 +278,10 @@ window.eliminar=async function(id){
   const ok=await customConfirm('Remover conta #'+id+' ?');
   if(!ok)return;
   try{
-    const{data,error}=await supabase.from('contatos').delete().eq('id',id).select();
-    if(error){mostrarToast('Erro: '+error.message,true);return}
-    if(!data||!data.length){
-      const{data:check}=await supabase.from('contatos').select('id').eq('id',id);
-      if(check&&check.length>0)mostrarToast('RLS bloqueando DELETE',true);
-      else{mostrarToast('✓ Removida');carregar()}
-    }else{mostrarToast('✓ Removida');carregar()}
-  }catch(e){mostrarToast('Erro: '+(e.message||e),true)}
+    await supabaseFetch(`contatos?id=eq.${id}`, { method: 'DELETE' });
+    mostrarToast('✓ Removida');
+    carregar();
+  }catch(e){mostrarToast('Erro ao remover',true)}
 }
 
 window.abrirModalEliminarTudo=function(){
@@ -271,13 +294,4 @@ window.abrirModalEliminarTudo=function(){
 }
 window.fecharModalSenha=function(){document.getElementById('modalSenha').style.display='none';}
 
-window.confirmarEliminarTudo=async function(){
-  const input=document.getElementById('inputSenha');
-  const senha=input.value.trim();
-  const erroEl=document.getElementById('senhaErro');
-  if(senha!=='123'){
-    erroEl.style.display='block';
-    input.classList.add('erro');
-    input.value='';
-    input.focus();
- 
+window.c

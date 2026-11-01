@@ -210,11 +210,9 @@ async function carregar(){
   try {
     const url = `${SUPABASE_URL}/rest/v1/contatos?select=*`;
     const res = await fetch(url, {
-      method: 'GET',
       headers: {
         'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Accept': 'application/json'
+        'Authorization': `Bearer ${SUPABASE_KEY}`
       }
     });
     
@@ -293,4 +291,4 @@ window.abrirModalEliminarTudo=function(){
   document.getElementById('senhaErro').style.display='none';
   setTimeout(()=>document.getElementById('inputSenha').focus(),100);
 }
-window.fecharM
+window.fecharModalSenha=function(){document.getElementById('modalSenha').
